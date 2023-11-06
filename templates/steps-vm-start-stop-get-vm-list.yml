@@ -1,0 +1,70 @@
+parameters:
+  - name: VM_NAME
+    type: string
+    default:
+  - name: VM_STATE
+    displayName: VM State
+    type: string
+    default: start
+steps:
+  - script: |
+      set -e
+      echo "Inputs:"
+      echo " - VM_STATE: ${VM_STATE}"
+    displayName: "Show parameters"
+    env:
+      VM_STATE: ${{ parameters.VM_STATE }}
+  - script: |
+      set -euo pipefail
+      export TERM=ansi
+      bold=$(tput bold)
+      green=$(tput setaf 2)
+      yellow=$(tput setaf 3)
+      red=$(tput setaf 1)
+      normal=$(tput sgr0)
+      YAML_FILE="scheduler-exceptions.yaml"
+      YAML_CONTENT=$(cat "$YAML_FILE")
+      echo "${bold}Exceptions File:"
+      echo
+      printf "%b\n" "$YAML_CONTENT"
+      VMS_SCHEDULED=""
+      SUBSCRIPTION=$(yq eval 'keys' "${YAML_FILE}" -o j | jq -r '.[]')
+      for subs in ${SUBSCRIPTION}; do
+          echo "${green}For Subscription: ${subs} ${normal}"
+          echo
+          resource_groups=$(yq eval ".${subs} | keys" "${YAML_FILE}" -o j | jq -r '.[]')
+          for rg in ${resource_groups}; do
+              echo "--- ${bold}RG: ${rg}${normal} ---"
+              echo $'\n'
+              echo "      VMs in: ${bold}${rg}${normal}"
+              VM_NAME=$(az vm list --subscription "${subs}" -g "${rg}" --query "[?contains(name, 'iothub')].name" -o json | jq -r 'join(",")')
+              vms=$(yq eval ".${subs}.${rg}" "${YAML_FILE}" -o j | jq -r '.[]')
+              IFS_OLD="${IFS}"
+              IFS=',' read -ra VM_ARRAY <<< "${VM_NAME}"
+              for vm in "${VM_ARRAY[@]}"; do
+                  if ! grep -q "${vm}" <<< "${vms}"; then
+                      echo "        ${green}${vm}${normal}: added to scheduler"
+                      VMS_SCHEDULED+=( "${vm}" )
+                  else
+                      echo "        ${red}${vm}${normal}: not scheduler"
+                  fi
+              done
+              IFS="${IFS_OLD}"
+              echo
+          done
+          echo
+      done
+      echo "  ${bold}VMs to schedule:${normal}"
+      for vm in "${VMS_SCHEDULED[@]}"; do
+          echo "      ${yellow}${vm}${normal}"
+      done
+      echo $'\n'
+      VM_LIST=$(echo "${VMS_SCHEDULED[*]}" )
+      echo "##vso[task.setvariable variable=VM_LIST]$VM_LIST"
+    displayName: "VM List"
+    env:
+      VM_NAME: ${{ parameters.VM_NAME }}
+  - template: steps-vm-state.yml
+    parameters:
+      VM_STATE: ${{ parameters.VM_STATE }}
+      VM_LIST: $(VM_LIST)

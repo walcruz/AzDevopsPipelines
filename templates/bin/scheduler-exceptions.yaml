@@ -1,0 +1,14 @@
+SUBSCRIPTION-Dev:
+    Resource_Group_Dev:
+        - vm-dev-1
+        - vm-dev-2
+        - vm-dev-3
+        - vm-dev-4
+    Resource_Group_Stg:
+        - vm-stg-1
+SUBSCRIPTION-Prod:
+    Resource_Group_Prod:
+        - vm-pro-1
+        - vm-pro-2
+        - vm-pro-3
+    

@@ -1,0 +1,54 @@
+parameters:
+  - name: ARTIFACT_PATH
+    type: string
+    default: '$(Agent.TempDirectory)'
+
+  - name: EXTRA_PATH
+    type: string
+    default: ""
+
+  - name: DEBIAN_FILE
+    type: string
+
+  - name: STORAGE_ACCOUNT
+    type: string
+
+  - name: CONTAINER_NAME
+    type: string
+
+steps:
+  - script: |
+      set -euo pipefail
+
+      if [ -n "${EXTRA_PATH}" ]
+      then
+        export PATH="${EXTRA_PATH}:${PATH}"
+      fi
+
+      cat <<EOF
+      Inputs:
+      - DEBIAN_FILE: ${DEBIAN_FILE}
+      - STORAGE_ACCOUNT: ${STORAGE_ACCOUNT}
+      - CONTAINER_NAME: ${CONTAINER_NAME}
+      EOF
+
+      az extension list-available --output table | grep -i storage-preview
+
+      ACCOUNTKEY="$(az storage account keys list -n "${STORAGE_ACCOUNT}" --query="[0].value" -o tsv)"
+      UPLOADTOKENEXPIRY="$(date -u -d "30 minutes" '+%Y-%m-%dT%H:%MZ')"
+      UPLOADSAS="$(az storage container generate-sas -n "${CONTAINER_NAME}" --https-only --permissions rwl --expiry "${UPLOADTOKENEXPIRY}" -o tsv --account-name "${STORAGE_ACCOUNT}" --account-key "${ACCOUNTKEY}")"
+
+      if [ -f "${DEBIAN_FILE}" ]
+      then
+        az storage azcopy blob upload -c "${CONTAINER_NAME}" --account-name "${STORAGE_ACCOUNT}" -s "${DEBIAN_FILE}" --sas-token "${UPLOADSAS}"
+      else
+        echo "The debian file [ ${DEBIAN_FILE} ] does not exist" >&2
+        exit 2
+      fi
+    displayName: 'Copy deb file to Azure Storage account'
+    workingDirectory: ${{ parameters.ARTIFACT_PATH }}
+    env:
+      EXTRA_PATH: ${{ parameters.EXTRA_PATH }}
+      DEBIAN_FILE: ${{ parameters.DEBIAN_FILE }}
+      STORAGE_ACCOUNT: ${{ parameters.STORAGE_ACCOUNT }}
+      CONTAINER_NAME: ${{ parameters.CONTAINER_NAME }}

@@ -1,0 +1,92 @@
+parameters:
+  - name: APP_NAME
+    type: string
+  - name: APP_PATH
+    type: string
+  - name: REGISTRY
+    type: string
+    default: x
+  - name: NEED_ARTIFACT
+    type: boolean
+    default: true
+  - name: ARTIFACT_NAME
+    type: string
+  - name: BUILD_ARGUMENTS
+    type: object
+    default: {}
+
+steps:
+  - script: |
+      set -e
+      echo "Repos files:"
+      tree
+      echo
+      cat<<EOF
+      Input parameters:
+       - APP_NAME: ${APP_NAME}
+       - APP_PATH: ${APP_PATH}
+       - NEED_ARTIFACT: ${NEED_ARTIFACT}
+       - BUILD_ARGUMENTS: ${BUILD_ARGUMENTS}
+      EOF
+    displayName: "Show parameters"
+    env:
+      APP_NAME: ${{ parameters.APP_NAME }}
+      APP_PATH: ${{ parameters.APP_PATH }}
+      NEED_ARTIFACT: ${{parameters.NEED_ARTIFACT}}
+      BUILD_ARGUMENTS: ${{ convertToJson(parameters.BUILD_ARGUMENTS) }}
+  - task: Docker@2
+    displayName: Login to ACR
+    inputs:
+      command: login
+      containerRegistry: ${{parameters.REGISTRY}}
+  - script: |
+      set -e
+      ENV_ARGUMENTS=()
+      DEBUILD_ARGUMENTS=()
+
+      echo "Build arguments:"
+      for VAR in $(echo "${BUILD_ARGUMENTS}" | jq '. | keys | .[]' -r)
+      do
+          VAL="$(echo "${BUILD_ARGUMENTS}" | jq ".${VAR}" -r)"
+          ENV_ARGUMENTS+=("--env" "${VAR}=${VAL}")
+          echo "--env ${VAR}=${VAL}"
+          DEBUILD_ARGUMENTS+=("--preserve-envvar" "${VAR}")
+      done
+
+      docker pull ${REGISTRY}.azurecr.io/debuild:latest
+      env | sort
+      set -x
+      docker run \
+          -v "${APP_PATH}/..:/debian-packages/" \
+          -w "/debian-packages/${APP_NAME}/" \
+          --env "BUILDER_UID=$(id -u)" \
+          --env "BUILDER_GID=$(id -g)" \
+          "${ENV_ARGUMENTS[@]}" \
+          "${REGISTRY}.azurecr.io/debuild:latest" \
+          HOME=/home/builder debuild \
+              "${DEBUILD_ARGUMENTS[@]}" \
+              -us \
+              -uc
+      DEBIAN_FILE="$( ls -1rt "${APP_PATH}/../"*.deb | tail -1 )"
+      echo "Path for the Debian file: ${DEBIAN_FILE}"
+      echo "##vso[task.setvariable variable=DEBIAN_FILE;isOutput=true]${DEBIAN_FILE}"
+    displayName: "Running Debuild Application"
+    name: BuiltPackage
+    env:
+      APP_NAME: ${{ parameters.APP_NAME }}
+      APP_PATH: ${{ parameters.APP_PATH }}
+      REGISTRY: ${{parameters.REGISTRY}}
+      BUILD_ARGUMENTS: ${{ convertToJson(parameters.BUILD_ARGUMENTS) }}
+  - script: |
+      set -e
+      echo "Tree files for $APP_NAME :"
+      tree
+    displayName: "Results"
+    env:
+      APP_NAME: ${{ parameters.APP_NAME }}
+  - task: PublishPipelineArtifact@1
+    displayName: "Publish Artifact"
+    condition: eq(${{parameters.NEED_ARTIFACT}}, 'true')
+    inputs:
+      artifactName: ${{ parameters.ARTIFACT_NAME }}
+      targetPath: "$(BuiltPackage.DEBIAN_FILE)"

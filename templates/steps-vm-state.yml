@@ -1,0 +1,77 @@
+parameters:
+  - name: VM_LIST
+    type: string
+  - name: VM_STATE
+    type: string
+
+steps:
+  - script: |
+      set -e
+      echo "Inputs:"
+      IFS_OLD="${IFS}"
+      IFS=' ' read -ra VM_ARRAY <<< "${VM_LIST}"
+      echo " - VMs:"
+      for vm in "${VM_ARRAY[@]}"; do
+        echo "             ${vm}"
+      done
+      IFS="${IFS_OLD}"
+      echo " - VM_STATE: ${VM_STATE}"
+    displayName: "Show parameters"
+    env:
+      VM_LIST: ${{ parameters.VM_LIST }}
+      VM_STATE: ${{ parameters.VM_STATE }}
+
+  - script: |
+      set -euo pipefail
+      export TERM=ansi
+      bold=$(tput bold)
+      green=$(tput setaf 2)
+      yellow=$(tput setaf 3)
+      red=$(tput setaf 1)
+      normal=$(tput sgr0)
+      VM_SWITCH_STATE=""
+      SUBSCRIPTION=""
+      echo "${bold}VM to ${VM_STATE}: "
+      IFS_OLD="${IFS}"
+      IFS=' ' read -ra VM_ARRAY <<< "${VM_LIST}"
+      for vm in "${VM_ARRAY[@]}"; do
+        VM_RESOURCE_GROUP=$(az vm list --query "[?name=='${vm}'].{Resource_Group: resourceGroup}" -o tsv)
+        SUBSCRIPTION=$(az account show --query "name" --output tsv)
+        if [ -z "${VM_RESOURCE_GROUP}" ];
+        then
+          if [ "${SUBSCRIPTION}" == "RARO-DigitalFactory-Dev" ];
+          then
+            az account set --subscription "RARO-DigitalFactory-Prd"
+            VM_RESOURCE_GROUP=$(az vm list --query "[?name=='${vm}'].{Resource_Group: resourceGroup}" -o tsv)
+          elif [ "${SUBSCRIPTION}" == "RARO-DigitalFactory-Prd" ];
+          then
+            az account set --subscription "RARO-DigitalFactory-Dev"
+            VM_RESOURCE_GROUP=$(az vm list --query "[?name=='${vm}'].{Resource_Group: resourceGroup}" -o tsv)
+          else
+            echo "${red}RESOURCRE GROUP not found..."
+          fi
+        fi   
+        echo " - ${bold}${green}VM: ${vm} Resource Group: ${VM_RESOURCE_GROUP} Subscription: ${SUBSCRIPTION}"
+        echo " - ${bold}${VM_STATE}ing VM ${vm}:"
+        echo
+        if [ "${VM_STATE}" == "stop" ];
+        then
+          VM_SWITCH_STATE="deallocate"
+        else
+          VM_SWITCH_STATE="${VM_STATE}"
+        fi
+        az vm "${VM_SWITCH_STATE}" \
+          --resource-group "${VM_RESOURCE_GROUP}" \
+          --name "${vm}"
+        echo
+        az vm show --name "${vm}" \
+          --resource-group "${VM_RESOURCE_GROUP}" \
+          --show-details -o table
+        echo
+        echo
+      done
+      IFS="${IFS_OLD}"
+    displayName: State VM
+    env:
+      VM_LIST: ${{ parameters.VM_LIST }}
+      VM_STATE: ${{parameters.VM_STATE}}

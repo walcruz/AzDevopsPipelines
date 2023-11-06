@@ -1,0 +1,61 @@
+parameters:
+  - name: VERSION_FILE
+    type: string
+    default:
+  - name: IS_NOT_PR
+    type: string
+    default: true
+  - name: GIT_BRANCH_PULL_TARGET
+    type: string
+steps:
+  - script: |
+      set -euo pipefail
+      export TERM=ansi
+      bold=$(tput bold)
+      green=$(tput setaf 2)
+      yellow=$(tput setaf 3)
+      red=$(tput setaf 1)
+      normal=$(tput sgr0)
+
+      if "${IS_NOT_PR,,}"
+      then
+        VERSION_PREVIOUS="$(git show "HEAD^:${VERSION_FILE}")"
+        echo "Previous version: ${VERSION_PREVIOUS}"
+
+        VERSION_CURRENT="$(git show "HEAD:${VERSION_FILE}")"
+        echo "Current version: ${VERSION_CURRENT}"
+      else
+        # Ensure git will know about destination branch
+        # Prevent error: fatal: invalid object name 'refs/heads/main'.
+        BRANCH="${GIT_BRANCH_PULL_TARGET##*/}"
+        git fetch
+        git branch -v --track "${BRANCH}" "origin/${BRANCH}" || true
+
+        VERSION_PREVIOUS="$(git show "${BRANCH}:${VERSION_FILE}")"
+        echo "Previous version: ${VERSION_PREVIOUS}"
+
+        VERSION_CURRENT="$(git show "HEAD:${VERSION_FILE}")"
+        echo "Current version: ${VERSION_CURRENT}"
+      fi
+
+      if [[ "${VERSION_CURRENT}" == "${VERSION_PREVIOUS}" ]]; then
+        echo "        ${red}${bold}Error:${normal}${red} change version changelog.${normal}"
+        exit 1  
+      fi
+
+      if ! [[ "${VERSION_CURRENT}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "        ${red}${bold}Error:${normal}${red} version format is invalid.${normal}"
+        exit 1  
+      fi
+
+      if [ "$(echo -e "${VERSION_PREVIOUS}\n${VERSION_CURRENT}" | sort -V | tail -n 1)" != "${VERSION_CURRENT}" ]; then
+        echo "        ${red}${bold}Error:${normal}${red} you need to change version file on new release. The version has to be greater than the previous one${normal}"
+        exit 1
+      else
+        echo "        ${green}Version updated to ${VERSION_CURRENT}.${normal}"
+      fi
+    displayName: "Check version file"
+    env:
+      VERSION_FILE: ${{ parameters.VERSION_FILE }}
+      IS_NOT_PR: ${{ parameters.IS_NOT_PR }}
+      GIT_BRANCH_PULL_TARGET: ${{ parameters.GIT_BRANCH_PULL_TARGET }}
